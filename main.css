@@ -13,10 +13,45 @@ body {
   color: #fff;
   font-family: Noto Sans, sans-serif;
 
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.root {
+  display: flex;
+  flex-direction: column;
+
+  position: absolute;
+  top: 0px;
+  left: 0px;
+  width: 100vw;
+  height: 100vh;
+}
+
+.menu {
+  padding: 8px;
   display: flex;
   flex-direction: row;
   gap: 16px;
+
+  background-color: #222;
+}
+
+.tracks {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  overflow-y: scroll;
+}
+
+.track {
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+
+  height: 400px;
 }
 
 .card {
@@ -63,10 +98,6 @@ canvas {
 .sequence-canvas {
   aspect-ratio: none;
   flex-grow: 1;
-}
-
-.card {
-  width: 300px;
 }
 
 h1 {

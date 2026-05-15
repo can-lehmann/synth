@@ -41,6 +41,8 @@ function h(tag, ...args) {
         if (value) {
           element.setAttribute(key, "")
         }
+      } else if (key == "style") {
+        Object.assign(element.style, value)
       } else {
         element.setAttribute(key, value)
       }
@@ -69,7 +71,7 @@ class Adsr {
 class AdsrEditor {
   constructor(adsr) {
     this.adsr = adsr
-    this.element = h(".adsr-editor.card", [
+    this.element = h(".adsr-editor.card", {style: {width: "300px"}}, [
       h("h1", "ADSR Envelope Editor"),
       this.canvas = h("canvas.adsr-canvas"),
       h(".row", [
@@ -204,7 +206,7 @@ class AdditiveSynth {
 class AdditiveSynthEditor {
   constructor(synth) {
     this.synth = synth
-    this.element = h(".additive-synth-editor.card", [
+    this.element = h(".additive-synth-editor.card", {style: {width: "300px"}}, [
       h("h1", "Additive Synth Editor"),
       this.canvas = h("canvas.additive-synth-canvas"),
       this.oscList = h(".list")
@@ -322,7 +324,7 @@ class ChromaticScale {
 }
 
 class Sequence {
-  constructor(scale, length = 4) {
+  constructor(scale, length = 8) {
     this.scale = scale
     this.notes = []
     this.length = length
@@ -336,9 +338,9 @@ class Sequence {
 class SequenceEditor {
   constructor(sequence) {
     this.sequence = sequence
-    this.element = h(".sequence-editor.card", [
+    this.element = h(".sequence-editor.card", {style: {"flex-grow": 1}}, [
       h("h1", "Sequence Editor"),
-      this.canvas = h("canvas.sequence-canvas")
+      this.canvas = h("canvas.sequence-canvas", {height: 1})
     ])
 
     this.ctx = this.canvas.getContext("2d")
@@ -397,23 +399,85 @@ class SequenceEditor {
   }
 }
 
+// Project
+
+class Instrument {
+  constructor() {
+    this.adsr = new Adsr()
+    this.synth = new AdditiveSynth()
+  }
+}
+
+class Track {
+  constructor(instrument) {
+    this.instrument = instrument
+    this.sequence = new Sequence(new ChromaticScale(440))
+  }
+}
+
+class Project {
+  constructor() {
+    this.instruments = []
+    this.tracks = []
+  }
+
+  addInstrument() {
+    const instrument = new Instrument()
+    this.instruments.push(instrument)
+    return instrument
+  }
+
+  addTrack(instrument) {
+    const track = new Track(instrument)
+    this.tracks.push(track)
+    return track
+  }
+}
+
+class ProjectEditor {
+  constructor(project) {
+    this.project = project
+    this.element = h(".root", [
+      h(".menu", [
+        h("h1", "Project"),
+        h("button", {
+          onclick: () => {}
+        }, "Play")
+      ]),
+      this.tracks = h(".tracks")
+    ])
+
+    this.updateAll()
+  }
+
+  updateAll() {
+    this.createTracks()
+  }
+
+  createTracks() {
+    this.tracks.innerHTML = ""
+    for (const track of this.project.tracks) {
+      const trackElement = h(".track", [
+        new AdsrEditor(track.instrument.adsr).element,
+        new AdditiveSynthEditor(track.instrument.synth).element,
+        new SequenceEditor(track.sequence).element
+      ])
+      this.tracks.appendChild(trackElement)
+    }
+
+    const addButton = h("button", {
+      onclick: () => {
+        this.project.addTrack(this.project.addInstrument())
+        this.updateAll()
+      }
+    }, "Add Track")
+    this.tracks.appendChild(addButton)
+  }
+}
+
+
 // Main
 
-const adsrEditor = new AdsrEditor(new Adsr())
-document.body.appendChild(adsrEditor.element)
-
-const synth = new AdditiveSynth()
-synth.addOscillator("sine", 1, 0, 1)
-
-const synthEditor = new AdditiveSynthEditor(synth)
-document.body.appendChild(synthEditor.element)
-
-const scale = new ChromaticScale(440)
-const sequence = new Sequence(scale)
-sequence.addNote(0, 0, 0.5)
-sequence.addNote(0.5, 4, 0.5)
-sequence.addNote(1, 7, 0.5)
-sequence.addNote(1.5, 12, 0.5)
-
-const sequenceEditor = new SequenceEditor(sequence)
-document.body.appendChild(sequenceEditor.element)
+const project = new Project()
+const editor = new ProjectEditor(project)
+document.body.appendChild(editor.element)
