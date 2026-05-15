@@ -60,6 +60,11 @@ canvas {
   aspect-ratio: 2;
 }
 
+.sequence-canvas {
+  aspect-ratio: none;
+  flex-grow: 1;
+}
+
 .card {
   width: 300px;
 }

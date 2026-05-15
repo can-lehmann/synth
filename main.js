@@ -245,8 +245,8 @@ class AdditiveSynthEditor {
         ]),
         h("input", {
           type: "number",
-          min: 0.1,
-          step: 0.1,
+          min: 1,
+          step: 1,
           value: osc.factor,
           oninput: (e) => {
             osc.factor = parseFloat(e.target.value)
@@ -308,6 +308,95 @@ class AdditiveSynthEditor {
   }
 }
 
+// Sequence / Pino Roll
+
+class ChromaticScale {
+  constructor(root) {
+    this.root = root
+    this.length = 12
+  }
+
+  getFrequency(note) {
+    return this.root * Math.pow(2, note / this.length)
+  }
+}
+
+class Sequence {
+  constructor(scale, length = 4) {
+    this.scale = scale
+    this.notes = []
+    this.length = length
+  }
+
+  addNote(time, note, duration) {
+    this.notes.push({ time, note, duration })
+  }
+}
+
+class SequenceEditor {
+  constructor(sequence) {
+    this.sequence = sequence
+    this.element = h(".sequence-editor.card", [
+      h("h1", "Sequence Editor"),
+      this.canvas = h("canvas.sequence-canvas")
+    ])
+
+    this.ctx = this.canvas.getContext("2d")
+    this.draw()
+
+    new ResizeObserver(() => this.resize()).observe(this.canvas)
+  }
+
+  resize() {
+    const rect = this.canvas.getBoundingClientRect()
+    this.canvas.width = rect.width
+    this.canvas.height = rect.height
+    this.draw()
+  }
+
+  draw() {
+    const width = this.canvas.width
+    const height = this.canvas.height
+    this.ctx.clearRect(0, 0, width, height)
+
+    const padding = 12
+
+    const widthPerBeat = (width - 2 * padding) / this.sequence.length
+    const heightPerNote = 16
+
+    this.ctx.beginPath()
+    this.ctx.strokeStyle = "#333"
+    this.ctx.lineWidth = 2
+    for (let i = 0; i <= (height - 2 * padding) / heightPerNote; i++) {
+      const y = height - padding - i * heightPerNote
+      this.ctx.moveTo(padding, y)
+      this.ctx.lineTo(width - padding, y)
+    }
+    this.ctx.stroke()
+
+    this.ctx.beginPath()
+    this.ctx.strokeStyle = "#555"
+    this.ctx.lineWidth = 2
+    for (let i = 0; i <= this.sequence.length; i++) {
+      const x = padding + i * widthPerBeat
+      this.ctx.moveTo(x, padding)
+      this.ctx.lineTo(x, height - padding)
+    }
+    this.ctx.stroke()
+
+    for (const note of this.sequence.notes) {
+      const x = padding + note.time / this.sequence.length * (width - 2 * padding)
+      const y = height - padding - (note.note + 1) * heightPerNote
+      const w = note.duration / this.sequence.length * (width - 2 * padding)
+      const h = heightPerNote - 2
+
+      this.ctx.fillStyle = "#fff"
+      this.ctx.fillRect(x, y, w, h)
+    }
+
+  }
+}
+
 // Main
 
 const adsrEditor = new AdsrEditor(new Adsr())
@@ -318,3 +407,13 @@ synth.addOscillator("sine", 1, 0, 1)
 
 const synthEditor = new AdditiveSynthEditor(synth)
 document.body.appendChild(synthEditor.element)
+
+const scale = new ChromaticScale(440)
+const sequence = new Sequence(scale)
+sequence.addNote(0, 0, 0.5)
+sequence.addNote(0.5, 4, 0.5)
+sequence.addNote(1, 7, 0.5)
+sequence.addNote(1.5, 12, 0.5)
+
+const sequenceEditor = new SequenceEditor(sequence)
+document.body.appendChild(sequenceEditor.element)
