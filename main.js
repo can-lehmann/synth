@@ -37,6 +37,10 @@ function h(tag, ...args) {
         classes.push(...value.split(" "))
       } else if (key.startsWith("on")) {
         element[key] = value
+      } else if (tag == "option" && key == "selected") {
+        if (value) {
+          element.setAttribute(key, "")
+        }
       } else {
         element.setAttribute(key, value)
       }
@@ -161,5 +165,156 @@ class AdsrEditor {
   }
 }
 
+// Additive Synth
+
+class AdditiveSynth {
+  constructor() {
+    this.oscillators = []
+  }
+
+  addOscillator(kind, factor, phase, amplitude) {
+    this.oscillators.push({ kind, factor, phase, amplitude })
+  }
+
+  getSample(time, frequency) {
+    let sample = 0
+    for (const osc of this.oscillators) {
+      const t = time * frequency * osc.factor + osc.phase
+      let value = 0
+      switch (osc.kind) {
+        case "sine":
+          value = Math.sin(2 * Math.PI * t)
+          break
+        case "square":
+          value = Math.sign(Math.sin(2 * Math.PI * t))
+          break
+        case "sawtooth":
+          value = 2 * (t - Math.floor(t + 0.5))
+          break
+        case "triangle":
+          value = 2 * Math.abs(2 * (t - Math.floor(t + 0.5))) - 1
+          break
+      }
+      sample += value * osc.amplitude
+    }
+    return sample
+  }
+}
+
+class AdditiveSynthEditor {
+  constructor(synth) {
+    this.synth = synth
+    this.element = h(".additive-synth-editor.card", [
+      h("h1", "Additive Synth Editor"),
+      this.canvas = h("canvas.additive-synth-canvas"),
+      this.oscList = h(".list")
+    ])
+
+    this.ctx = this.canvas.getContext("2d")
+    this.updateAll()
+
+    new ResizeObserver(() => this.resize()).observe(this.canvas)
+  }
+
+  resize() {
+    const rect = this.canvas.getBoundingClientRect()
+    this.canvas.width = rect.width
+    this.canvas.height = rect.height
+    this.draw()
+  }
+
+  updateAll() {
+    this.createOscs()
+    this.draw()
+  }
+
+  createOscs() {
+    this.oscList.innerHTML = ""
+    for (const [index, osc] of this.synth.oscillators.entries()) {
+      const item = h(".row", [
+        h("select", {
+          onchange: (e) => {
+            osc.kind = e.target.value
+            this.draw()
+          }
+        }, [
+          h("option", { value: "sine", selected: osc.kind === "sine" }, "Sine"),
+          h("option", { value: "square", selected: osc.kind === "square" }, "Square"),
+          h("option", { value: "sawtooth", selected: osc.kind === "sawtooth" }, "Sawtooth"),
+          h("option", { value: "triangle", selected: osc.kind === "triangle" }, "Triangle"),
+        ]),
+        h("input", {
+          type: "number",
+          min: 0.1,
+          step: 0.1,
+          value: osc.factor,
+          oninput: (e) => {
+            osc.factor = parseFloat(e.target.value)
+            this.draw()
+          }
+        }),
+        h("input", {
+          type: "number",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: osc.amplitude,
+          oninput: (e) => {
+            osc.amplitude = parseFloat(e.target.value)
+            this.draw()
+          }
+        }),
+        h("button", {
+          onclick: () => {
+            this.synth.oscillators.splice(index, 1)
+            this.updateAll()
+          }
+        }, "x")
+      ])
+      this.oscList.appendChild(item)
+    }
+
+    const addButton = h("button", {
+      onclick: () => {
+        this.synth.addOscillator("sine", 1, 0, 1)
+        this.updateAll()
+      }
+    }, "Add Oscillator")
+    this.oscList.appendChild(addButton)
+  }
+
+  draw() {
+    const width = this.canvas.width
+    const height = this.canvas.height
+    this.ctx.clearRect(0, 0, width, height)
+
+    this.ctx.strokeStyle = "#fff"
+    this.ctx.lineWidth = 2
+
+    const padding = 12
+
+    this.ctx.beginPath()
+    for (let x = padding; x < width - padding; x++) {
+      const time = (x - padding) / (width - 2 * padding)
+      const sample = this.synth.getSample(time, 1)
+      const y = (1 - (sample + 1) / 2) * (height - 2 * padding) + padding
+      if (x === padding) {
+        this.ctx.moveTo(x, y)
+      } else {
+        this.ctx.lineTo(x, y)
+      }
+    }
+    this.ctx.stroke()
+  }
+}
+
+// Main
+
 const adsrEditor = new AdsrEditor(new Adsr())
 document.body.appendChild(adsrEditor.element)
+
+const synth = new AdditiveSynth()
+synth.addOscillator("sine", 1, 0, 1)
+
+const synthEditor = new AdditiveSynthEditor(synth)
+document.body.appendChild(synthEditor.element)
