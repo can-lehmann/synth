@@ -395,13 +395,19 @@ class AdditiveSynthEditor {
 // Sequence / Pino Roll
 
 class ChromaticScale {
-  constructor(root) {
-    this.root = root
-    this.length = 12
+  constructor() {
+    this.root = 440
   }
 
   getFrequency(note) {
-    return this.root * Math.pow(2, note / this.length)
+    return this.root * Math.pow(2, note / 12)
+  }
+
+  getName(note) {
+    const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    const index = (note % 12 + 12 + 9) % 12
+    const ocatave = Math.floor((note + 9) / 12) + 4
+    return names[index] + " " + ocatave.toString()
   }
 }
 
@@ -546,12 +552,13 @@ class SequenceEditor {
 
   toNoteSpace(x, y) {
     const padding = 12
+    const labelWidth = 24
     const width = this.canvas.width
     const height = this.canvas.height
-    const widthPerBeat = (width - 2 * padding) / this.sequence.length
+    const widthPerBeat = (width - 2 * padding - labelWidth) / this.sequence.length
     const heightPerNote = 16
 
-    let time = (x - padding) / widthPerBeat
+    let time = (x - padding - labelWidth) / widthPerBeat
     let note = (height - padding - y) / heightPerNote
 
     time -= this.scroll.time
@@ -562,15 +569,16 @@ class SequenceEditor {
 
   toScreenSpace(time, note) {
     const padding = 12
+    const labelWidth = 24
     const width = this.canvas.width
     const height = this.canvas.height
-    const widthPerBeat = (width - 2 * padding) / this.sequence.length
+    const widthPerBeat = (width - 2 * padding - labelWidth) / this.sequence.length
     const heightPerNote = 16
 
     time += this.scroll.time
     note += this.scroll.note
 
-    const x = time * widthPerBeat + padding
+    const x = time * widthPerBeat + padding + labelWidth
     const y = height - padding - note * heightPerNote
 
     return { x, y }
@@ -589,8 +597,9 @@ class SequenceEditor {
     this.ctx.clearRect(0, 0, width, height)
 
     const padding = 12
+    const labelWidth = 24
 
-    const widthPerBeat = (width - 2 * padding) / this.sequence.length
+    const widthPerBeat = (width - 2 * padding - labelWidth) / this.sequence.length
     const heightPerNote = 16
 
     this.ctx.beginPath()
@@ -598,7 +607,7 @@ class SequenceEditor {
     this.ctx.lineWidth = 2
     for (let i = 0; i <= (height - 2 * padding) / heightPerNote; i++) {
       const y = height - padding - i * heightPerNote
-      this.ctx.moveTo(padding, y)
+      this.ctx.moveTo(padding + labelWidth, y)
       this.ctx.lineTo(width - padding, y)
     }
     this.ctx.stroke()
@@ -607,7 +616,7 @@ class SequenceEditor {
     this.ctx.strokeStyle = "#333"
     this.ctx.lineWidth = 2
     for (let i = 0; i <= this.sequence.length * this.divs; i++) {
-      const x = padding + i * widthPerBeat / this.divs
+      const x = padding + labelWidth + i * widthPerBeat / this.divs
       this.ctx.moveTo(x, padding)
       this.ctx.lineTo(x, height - padding)
     }
@@ -617,11 +626,21 @@ class SequenceEditor {
     this.ctx.strokeStyle = "#555"
     this.ctx.lineWidth = 2
     for (let i = 0; i <= this.sequence.length; i++) {
-      const x = padding + i * widthPerBeat
+      const x = padding + labelWidth + i * widthPerBeat
       this.ctx.moveTo(x, padding)
       this.ctx.lineTo(x, height - padding)
     }
     this.ctx.stroke()
+
+    this.ctx.fillStyle = "#fff"
+    this.ctx.font = "10px Noto Sans, sans-serif"
+    for (let i = 0; i <= (height - 2 * padding) / heightPerNote; i++) {
+      const label = this.sequence.scale.getName(i - this.scroll.note)
+      const measurements = this.ctx.measureText(label)
+      let y = height - padding - i * heightPerNote - heightPerNote / 2 + measurements.actualBoundingBoxAscent / 2
+      let x = padding + labelWidth - measurements.width - 4
+      this.ctx.fillText(label, x, y)
+    }
 
     this.ctx.fillStyle = "#fff"
     for (const note of this.sequence.notes) {
@@ -672,7 +691,7 @@ class Track {
   constructor(instrument) {
     this.volume = 0.5
     this.instrument = instrument
-    this.sequence = new Sequence(new ChromaticScale(440))
+    this.sequence = new Sequence(new ChromaticScale())
     this.sequence.addNote(0, 0, 1)
   }
 }
