@@ -60,7 +60,8 @@ function h(tag, ...args) {
 // ADSR
 
 class Adsr {
-  constructor(attack = 0.1, decay = 0.2, sustain = 0.9, release = 0.2) {
+  constructor(volume = 0.5, attack = 0.1, decay = 0.2, sustain = 0.9, release = 0.2) {
+    this.volume = volume
     this.attack = attack
     this.decay = decay
     this.sustain = sustain
@@ -69,13 +70,13 @@ class Adsr {
 
   getLevel(time, releaseTime) {
     if (time < this.attack) {
-      return time / this.attack
+      return time / this.attack * this.volume
     } else if (time < this.attack + this.decay) {
-      return 1 - (time - this.attack) / this.decay * (1 - this.sustain)
+      return (1 - (time - this.attack) / this.decay * (1 - this.sustain)) * this.volume
     } else if (releaseTime === null || time < releaseTime) {
-      return this.sustain
+      return this.sustain * this.volume
     } else if (time < releaseTime + this.release) {
-      return this.sustain * (1 - (time - releaseTime) / this.release)
+      return this.sustain * (1 - (time - releaseTime) / this.release) * this.volume
     } else {
       return 0
     }
@@ -88,6 +89,20 @@ class AdsrEditor {
     this.element = h(".adsr-editor.card", {style: {width: "300px"}}, [
       h("h1", "ADSR Envelope Editor"),
       this.canvas = h("canvas.adsr-canvas"),
+      h(".row", [
+        h("label", "Volume"),
+        h("input", {
+          type: "range",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: this.adsr.volume,
+          oninput: (e) => {
+            this.adsr.volume = parseFloat(e.target.value)
+            this.draw()
+          }
+        }),
+      ]),
       h(".row", [
         h("label", "Attack"),
         h("input", {
@@ -172,11 +187,12 @@ class AdsrEditor {
 
     this.ctx.beginPath()
     this.ctx.moveTo(padding, height - padding)
-    this.ctx.lineTo(this.adsr.attack / 5 * (width - 2 * padding) + padding, padding)
-    this.ctx.lineTo((this.adsr.attack + this.adsr.decay) / 5 * (width - 2 * padding) + padding, (1 - this.adsr.sustain) * (height - 2 * padding) + padding)
-    this.ctx.lineTo((this.adsr.attack + this.adsr.decay + 1) / 5 * (width - 2 * padding) + padding, (1 - this.adsr.sustain) * (height - 2 * padding) + padding)
-    this.ctx.lineTo((this.adsr.attack + this.adsr.decay + 1 + this.adsr.release) / 5 * (width - 2 * padding) + padding, height - padding)
-
+    for (let x = padding; x < width - padding; x++) {
+      const time = (x - padding) / (width - 2 * padding) * 2
+      const level = this.adsr.getLevel(time, this.adsr.attack + this.adsr.decay + 0.2)
+      const y = (1 - level) * (height - 2 * padding) + padding
+      this.ctx.lineTo(x, y)
+    }
     this.ctx.stroke()
   }
 }
@@ -209,6 +225,9 @@ class AdditiveSynth {
           break
         case "triangle":
           value = 2 * Math.abs(2 * (t - Math.floor(t + 0.5))) - 1
+          break
+        case "noise":
+          value = Math.random() * 2 - 1
           break
       }
       sample += value * osc.amplitude
@@ -258,6 +277,7 @@ class AdditiveSynthEditor {
           h("option", { value: "square", selected: osc.kind === "square" }, "Square"),
           h("option", { value: "sawtooth", selected: osc.kind === "sawtooth" }, "Sawtooth"),
           h("option", { value: "triangle", selected: osc.kind === "triangle" }, "Triangle"),
+          h("option", { value: "noise", selected: osc.kind === "noise" }, "Noise")
         ]),
         h("input", {
           type: "number",
@@ -359,9 +379,35 @@ class Sequence {
 class SequenceEditor {
   constructor(sequence, audioContext) {
     this.sequence = sequence
+    this.divs = 4
     this.audioContext = audioContext
     this.element = h(".sequence-editor.card", {style: {"flex-grow": 1}}, [
-      h("h1", "Sequence Editor"),
+      h(".row", [
+        h("h1", {style: {"flex-grow": 1}}, "Sequence Editor"),
+        h("input", {
+          type: "number",
+          min: 1,
+          step: 1,
+          value: this.divs,
+          style: {width: "60px"},
+          oninput: (e) => {
+            this.divs = parseInt(e.target.value)
+            this.draw()
+          }
+        }),
+        "×",
+        h("input", {
+          type: "number",
+          min: 1,
+          step: 1,
+          value: this.sequence.length,
+          style: {width: "60px"},
+          oninput: (e) => {
+            this.sequence.length = parseInt(e.target.value)
+            this.draw()
+          }
+        })
+      ]),
       this.canvas = h("canvas.sequence-canvas", {height: 1})
     ])
 
@@ -375,7 +421,7 @@ class SequenceEditor {
       const { note, time } = this.toNoteSpace(e.offsetX, e.offsetY)
 
       if (e.button === 0) {
-        this.editingNote = { note: Math.floor(note), time: Math.floor(time), duration: 1 }
+        this.editingNote = { note: Math.floor(note), time: this.snapTime(time, false), duration: 1 / this.divs }
       } else if (e.button === 2) {
         this.sequence.removeNotes(time, Math.floor(note))
       }
@@ -390,7 +436,7 @@ class SequenceEditor {
       this.cursor = { note, time }
 
       if (this.editingNote) {
-        this.editingNote.duration = Math.max(1, Math.round(time - this.editingNote.time))
+        this.editingNote.duration = Math.max(1 / this.divs, this.snapTime(time - this.editingNote.time, true))
       }
 
       this.draw()
@@ -404,9 +450,20 @@ class SequenceEditor {
       }
     }
 
+    this.canvas.onwheel = (e) => {
+      e.preventDefault()
+      if (e.deltaY < 0) {
+        this.scroll.note -= 1
+      } else {
+        this.scroll.note += 1
+      }
+      this.draw()
+    }
+
     this.cursor = null
     this.editingNote = null
     this.playhead = null
+    this.scroll = { time: 0, note: 0 }
 
     this.ctx = this.canvas.getContext("2d")
     this.draw()
@@ -424,6 +481,16 @@ class SequenceEditor {
     new ResizeObserver(() => this.resize()).observe(this.canvas)
   }
 
+  snapTime(time, round) {
+    time = time * this.divs
+    if (round) {
+      time = Math.round(time)
+    } else {
+      time = Math.floor(time)
+    }
+    return time / this.divs
+  }
+
   toNoteSpace(x, y) {
     const padding = 12
     const width = this.canvas.width
@@ -431,8 +498,11 @@ class SequenceEditor {
     const widthPerBeat = (width - 2 * padding) / this.sequence.length
     const heightPerNote = 16
 
-    const time = (x - padding) / widthPerBeat
-    const note = (height - padding - y) / heightPerNote
+    let time = (x - padding) / widthPerBeat
+    let note = (height - padding - y) / heightPerNote
+
+    time -= this.scroll.time
+    note -= this.scroll.note
 
     return { time, note }
   }
@@ -443,6 +513,9 @@ class SequenceEditor {
     const height = this.canvas.height
     const widthPerBeat = (width - 2 * padding) / this.sequence.length
     const heightPerNote = 16
+
+    time += this.scroll.time
+    note += this.scroll.note
 
     const x = time * widthPerBeat + padding
     const y = height - padding - note * heightPerNote
@@ -474,6 +547,16 @@ class SequenceEditor {
       const y = height - padding - i * heightPerNote
       this.ctx.moveTo(padding, y)
       this.ctx.lineTo(width - padding, y)
+    }
+    this.ctx.stroke()
+
+    this.ctx.beginPath()
+    this.ctx.strokeStyle = "#333"
+    this.ctx.lineWidth = 2
+    for (let i = 0; i <= this.sequence.length * this.divs; i++) {
+      const x = padding + i * widthPerBeat / this.divs
+      this.ctx.moveTo(x, padding)
+      this.ctx.lineTo(x, height - padding)
     }
     this.ctx.stroke()
 
