@@ -43,12 +43,30 @@ body {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 48px;
 
   overflow-y: scroll;
 }
 
 .track {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.track-header {
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+
+  align-items: center;
+}
+
+.track-header h1 {
+  font-size: 1.3em;
+}
+
+.track-synth {
   display: flex;
   flex-direction: row;
   gap: 16px;

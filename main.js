@@ -60,8 +60,7 @@ function h(tag, ...args) {
 // ADSR
 
 class Adsr {
-  constructor(volume = 0.5, attack = 0.1, decay = 0.2, sustain = 0.9, release = 0.2) {
-    this.volume = volume
+  constructor(attack = 0.1, decay = 0.2, sustain = 0.9, release = 0.2) {
     this.attack = attack
     this.decay = decay
     this.sustain = sustain
@@ -70,13 +69,13 @@ class Adsr {
 
   getLevel(time, releaseTime) {
     if (time < this.attack) {
-      return time / this.attack * this.volume
+      return time / this.attack
     } else if (time < this.attack + this.decay) {
-      return (1 - (time - this.attack) / this.decay * (1 - this.sustain)) * this.volume
+      return (1 - (time - this.attack) / this.decay * (1 - this.sustain))
     } else if (releaseTime === null || time < releaseTime) {
-      return this.sustain * this.volume
+      return this.sustain
     } else if (time < releaseTime + this.release) {
-      return this.sustain * (1 - (time - releaseTime) / this.release) * this.volume
+      return this.sustain * (1 - (time - releaseTime) / this.release)
     } else {
       return 0
     }
@@ -89,20 +88,6 @@ class AdsrEditor {
     this.element = h(".adsr-editor.card", {style: {width: "300px"}}, [
       h("h1", "ADSR Envelope Editor"),
       this.canvas = h("canvas.adsr-canvas"),
-      h(".row", [
-        h("label", "Volume"),
-        h("input", {
-          type: "range",
-          min: 0,
-          max: 1,
-          step: 0.01,
-          value: this.adsr.volume,
-          oninput: (e) => {
-            this.adsr.volume = parseFloat(e.target.value)
-            this.draw()
-          }
-        }),
-      ]),
       h(".row", [
         h("label", "Attack"),
         h("input", {
@@ -685,6 +670,7 @@ class Instrument {
 
 class Track {
   constructor(instrument) {
+    this.volume = 0.5
     this.instrument = instrument
     this.sequence = new Sequence(new ChromaticScale(440))
     this.sequence.addNote(0, 0, 1)
@@ -720,7 +706,7 @@ class Project {
           const time = i / buffer.sampleRate - note.time
           const sample = track.instrument.synth.getSample(time, frequency)
           const level = track.instrument.adsr.getLevel(time, note.duration)
-          data[i] += sample * level
+          data[i] += sample * level * track.volume
         }
       }
     }
@@ -845,11 +831,35 @@ class ProjectEditor {
 
   createTracks() {
     this.tracks.innerHTML = ""
-    for (const track of this.project.tracks) {
+    for (const [index, track] of this.project.tracks.entries()) {
       const trackElement = h(".track", [
-        new AdsrEditor(track.instrument.adsr).element,
-        new AdditiveSynthEditor(track.instrument.synth).element,
-        new SequenceEditor(track.sequence, this.audioEngine).element
+        h(".track-header", [
+          h("h1", {style: {"flex-grow": 1}}, "Track " + (index + 1)),
+          h(".row", [
+            h("label", "Volume"),
+            h("input", {
+              type: "range",
+              min: 0,
+              max: 1,
+              step: 0.01,
+              value: track.volume,
+              oninput: (e) => {
+                track.volume = parseFloat(e.target.value)
+              }
+            })
+          ]),
+          h("button", {
+            onclick: () => {
+              this.project.tracks.splice(index, 1)
+              this.updateAll()
+            }
+          }, "x")
+        ]),
+        h(".track-synth", [
+          new AdsrEditor(track.instrument.adsr).element,
+          new AdditiveSynthEditor(track.instrument.synth).element,
+          new SequenceEditor(track.sequence, this.audioEngine).element
+        ])
       ])
       this.tracks.appendChild(trackElement)
     }
