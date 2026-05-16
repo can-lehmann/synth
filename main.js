@@ -66,6 +66,20 @@ class Adsr {
     this.sustain = sustain
     this.release = release
   }
+
+  getLevel(time, releaseTime) {
+    if (time < this.attack) {
+      return time / this.attack
+    } else if (time < this.attack + this.decay) {
+      return 1 - (time - this.attack) / this.decay * (1 - this.sustain)
+    } else if (releaseTime === null || time < releaseTime) {
+      return this.sustain
+    } else if (time < releaseTime + this.release) {
+      return this.sustain * (1 - (time - releaseTime) / this.release)
+    } else {
+      return 0
+    }
+  }
 }
 
 class AdsrEditor {
@@ -405,6 +419,7 @@ class Instrument {
   constructor() {
     this.adsr = new Adsr()
     this.synth = new AdditiveSynth()
+    this.synth.addOscillator("sine", 1, 0, 1)
   }
 }
 
@@ -412,6 +427,7 @@ class Track {
   constructor(instrument) {
     this.instrument = instrument
     this.sequence = new Sequence(new ChromaticScale(440))
+    this.sequence.addNote(0, 0, 1)
   }
 }
 
@@ -432,17 +448,90 @@ class Project {
     this.tracks.push(track)
     return track
   }
+
+  render(buffer) {
+    const data = buffer.getChannelData(0)
+    for (const track of this.tracks) {
+      for (const note of track.sequence.notes) {
+        const startSample = Math.floor(note.time * buffer.sampleRate)
+        const endSample = Math.floor((note.time + note.duration + track.instrument.adsr.release) * buffer.sampleRate)
+        const frequency = track.sequence.scale.getFrequency(note.note)
+        for (let i = startSample; i < endSample; i++) {
+          const time = i / buffer.sampleRate - note.time
+          const sample = track.instrument.synth.getSample(time, frequency)
+          const level = track.instrument.adsr.getLevel(time, note.duration)
+          data[i] += sample * level
+        }
+      }
+    }
+  }
 }
 
-class ProjectEditor {
+class AudioEngine {
   constructor(project) {
     this.project = project
+    this.isPlaying = false
+    this.audioContext = new AudioContext()
+    this.source = null
+  }
+
+  play() {
+    this.isPlaying = true
+
+    const buffer = new AudioBuffer({
+      length: this.audioContext.sampleRate * 10,
+      sampleRate: this.audioContext.sampleRate,
+      numberOfChannels: 1
+    })
+    this.project.render(buffer)
+
+    this.source = this.audioContext.createBufferSource()
+    this.source.buffer = buffer
+    this.source.connect(this.audioContext.destination)
+    this.source.start()
+  }
+
+  stop() {
+    this.isPlaying = false
+    this.source.stop()
+  }
+}
+
+class PlayPauseButton {
+  constructor(audioEngine) {
+    this.audioEngine = audioEngine
+
+    this.element = h("button", {
+      onclick: () => {
+        if (this.audioEngine.isPlaying) {
+          this.audioEngine.stop()
+        } else {
+          this.audioEngine.play()
+        }
+        this.update()
+      }
+    }, "Play")
+  }
+
+  update() {
+    this.element.textContent = this.audioEngine.isPlaying ? "Stop" : "Play"
+  }
+}   
+
+class ProjectEditor {
+  constructor(project, audioEngine) {
+    this.project = project
+    this.audioEngine = audioEngine
     this.element = h(".root", [
       h(".menu", [
         h("h1", "Project"),
         h("button", {
           onclick: () => {}
-        }, "Play")
+        }, "Load"),
+        h("button", {
+          onclick: () => {}
+        }, "Save"),
+        new PlayPauseButton(this.audioEngine).element
       ]),
       this.tracks = h(".tracks")
     ])
@@ -479,5 +568,6 @@ class ProjectEditor {
 // Main
 
 const project = new Project()
-const editor = new ProjectEditor(project)
+const audioEngine = new AudioEngine(project)
+const editor = new ProjectEditor(project, audioEngine)
 document.body.appendChild(editor.element)

@@ -35,6 +35,8 @@ body {
   gap: 16px;
 
   background-color: #222;
+
+  align-items: center;
 }
 
 .tracks {
