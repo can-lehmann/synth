@@ -202,43 +202,62 @@ class AdsrEditor {
 class AdditiveSynth {
   constructor() {
     this.oscillators = []
+    this.scale = 1
   }
 
   addOscillator(kind, factor, phase, amplitude) {
     this.oscillators.push({ kind, factor, phase, amplitude })
   }
 
+  getOsc(time, frequency, index) {
+    const osc = this.oscillators[index]
+    const t = time * frequency * osc.factor + osc.phase
+    let value = 0
+    switch (osc.kind) {
+      case "sine":
+        value = Math.sin(2 * Math.PI * t)
+        break
+      case "square":
+        value = Math.sign(Math.sin(2 * Math.PI * t))
+        break
+      case "sawtooth":
+        value = 2 * (t - Math.floor(t + 0.5))
+        break
+      case "triangle":
+        value = 2 * Math.abs(2 * (t - Math.floor(t + 0.5))) - 1
+        break
+      case "noise":
+        value = Math.random() * 2 - 1
+        break
+    }
+    return value * osc.amplitude
+  }
+
   getSample(time, frequency) {
     let sample = 0
-    for (const osc of this.oscillators) {
-      const t = time * frequency * osc.factor + osc.phase
-      let value = 0
-      switch (osc.kind) {
-        case "sine":
-          value = Math.sin(2 * Math.PI * t)
-          break
-        case "square":
-          value = Math.sign(Math.sin(2 * Math.PI * t))
-          break
-        case "sawtooth":
-          value = 2 * (t - Math.floor(t + 0.5))
-          break
-        case "triangle":
-          value = 2 * Math.abs(2 * (t - Math.floor(t + 0.5))) - 1
-          break
-        case "noise":
-          value = Math.random() * 2 - 1
-          break
-      }
-      sample += value * osc.amplitude
+    for (let i = 0; i < this.oscillators.length; i++) {
+      sample += this.getOsc(time, frequency, i)
     }
-    return sample
+    return sample * this.scale
+  }
+
+  getAllExcept(time, frequency, index) {
+    let sample = 0
+    for (let i = 0; i < this.oscillators.length; i++) {
+      if (i !== index) {
+        sample += this.getOsc(time, frequency, i)
+      }
+    }
+    return sample * this.scale
   }
 }
 
 class AdditiveSynthEditor {
   constructor(synth) {
     this.synth = synth
+
+    this.selected = null
+
     this.element = h(".additive-synth-editor.card", {style: {width: "300px"}}, [
       h("h1", "Additive Synth Editor"),
       this.canvas = h("canvas.additive-synth-canvas"),
@@ -263,6 +282,16 @@ class AdditiveSynthEditor {
     this.draw()
   }
 
+  renormalize() {
+    let maxAmplitude = 0
+    this.synth.scale = 1
+    for (let x = 0; x < 64; x++) {
+      const sample = this.synth.getSample(x / 64, 1)
+      maxAmplitude = Math.max(maxAmplitude, Math.abs(sample))
+    }
+    this.synth.scale = maxAmplitude > 0 ? 1 / maxAmplitude : 1
+  }
+
   createOscs() {
     this.oscList.innerHTML = ""
     for (const [index, osc] of this.synth.oscillators.entries()) {
@@ -273,11 +302,11 @@ class AdditiveSynthEditor {
             this.draw()
           }
         }, [
-          h("option", { value: "sine", selected: osc.kind === "sine" }, "Sine"),
-          h("option", { value: "square", selected: osc.kind === "square" }, "Square"),
-          h("option", { value: "sawtooth", selected: osc.kind === "sawtooth" }, "Sawtooth"),
-          h("option", { value: "triangle", selected: osc.kind === "triangle" }, "Triangle"),
-          h("option", { value: "noise", selected: osc.kind === "noise" }, "Noise")
+          h("option", { value: "sine", selected: osc.kind === "sine" }, "Sin"),
+          h("option", { value: "square", selected: osc.kind === "square" }, "Squ"),
+          h("option", { value: "sawtooth", selected: osc.kind === "sawtooth" }, "Saw"),
+          h("option", { value: "triangle", selected: osc.kind === "triangle" }, "Tri"),
+          h("option", { value: "noise", selected: osc.kind === "noise" }, "Noi")
         ]),
         h("input", {
           type: "number",
@@ -286,6 +315,7 @@ class AdditiveSynthEditor {
           value: osc.factor,
           oninput: (e) => {
             osc.factor = parseFloat(e.target.value)
+            this.selected = index
             this.draw()
           }
         }),
@@ -297,12 +327,26 @@ class AdditiveSynthEditor {
           value: osc.amplitude,
           oninput: (e) => {
             osc.amplitude = parseFloat(e.target.value)
+            this.selected = index
+            this.draw()
+          }
+        }),
+        h("input", {
+          type: "number",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: osc.phase,
+          oninput: (e) => {
+            osc.phase = parseFloat(e.target.value)
+            this.selected = index
             this.draw()
           }
         }),
         h("button", {
           onclick: () => {
             this.synth.oscillators.splice(index, 1)
+            this.selected = null
             this.updateAll()
           }
         }, "x")
@@ -320,15 +364,34 @@ class AdditiveSynthEditor {
   }
 
   draw() {
+    this.renormalize()
+
     const width = this.canvas.width
     const height = this.canvas.height
     this.ctx.clearRect(0, 0, width, height)
 
-    this.ctx.strokeStyle = "#fff"
     this.ctx.lineWidth = 2
 
     const padding = 12
 
+    if (this.selected !== null) {
+      const osc = this.synth.oscillators[this.selected]
+      this.ctx.strokeStyle = "#555"
+      this.ctx.beginPath()
+      for (let x = padding; x < width - padding; x++) {
+        const time = (x - padding) / (width - 2 * padding)
+        const sample = this.synth.getAllExcept(time, 1, this.selected)
+        const y = (1 - (sample + 1) / 2) * (height - 2 * padding) + padding
+        if (x === padding) {
+          this.ctx.moveTo(x, y)
+        } else {
+          this.ctx.lineTo(x, y)
+        }
+      }
+      this.ctx.stroke()
+    }
+
+    this.ctx.strokeStyle = "#fff"
     this.ctx.beginPath()
     for (let x = padding; x < width - padding; x++) {
       const time = (x - padding) / (width - 2 * padding)
@@ -448,6 +511,11 @@ class SequenceEditor {
         this.editingNote = null
         this.draw()
       }
+    }
+
+    this.canvas.onpointerleave = (e) => {
+      this.cursor = null
+      this.draw()
     }
 
     this.canvas.onwheel = (e) => {
