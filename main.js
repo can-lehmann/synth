@@ -397,17 +397,24 @@ class AdditiveSynthEditor {
 class ChromaticScale {
   constructor() {
     this.root = 440
+    this.ocataveSize = 12
+    this.subscales = [
+      { name: "No Scale", notes: [] },
+      { name: "Major", notes: [0, 2, 4, 5, 7, 9, 11] },
+      { name: "Minor", notes: [0, 2, 3, 5, 7, 8, 10] },
+      { name: "Pentatonic", notes: [0, 2, 4, 7, 9] }
+    ]
   }
 
   getFrequency(note) {
     return this.root * Math.pow(2, note / 12)
   }
 
-  getName(note) {
+  getName(note, includeOctave = true) {
     const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     const index = (note % 12 + 12 + 9) % 12
     const ocatave = Math.floor((note + 9) / 12) + 4
-    return names[index] + " " + ocatave.toString()
+    return names[index] + (includeOctave ? " " + ocatave.toString() : "")
   }
 }
 
@@ -416,6 +423,7 @@ class Sequence {
     this.scale = scale
     this.notes = []
     this.length = length
+    this.subscale = { kind: scale.subscales[0], base: 0 }
   }
 
   addNote(time, note, duration) {
@@ -438,6 +446,25 @@ class SequenceEditor {
     this.element = h(".sequence-editor.card", {style: {"flex-grow": 1}}, [
       h(".row", [
         h("h1", {style: {"flex-grow": 1}}, "Sequence Editor"),
+        h("select", {
+          onchange: (e) => {
+            this.sequence.subscale.kind = this.sequence.scale.subscales[parseInt(e.target.value)]
+            this.draw()
+          }
+        }, this.sequence.scale.subscales.map((subscale, index) => 
+          h("option", { value: index, selected: this.sequence.subscale.kind === subscale }, subscale.name)
+        )),
+        h("select", {
+          onchange: (e) => {
+            this.sequence.subscale.base = parseInt(e.target.value)
+            this.draw()
+          }
+        }, new Array(this.sequence.scale.ocataveSize).fill(0).map((_, index) => 
+          h("option", {
+            value: index,
+            selected: this.sequence.subscale.base === index
+          }, this.sequence.scale.getName(index, false))
+        )),
         h("input", {
           type: "number",
           min: 1,
@@ -602,6 +629,8 @@ class SequenceEditor {
     const widthPerBeat = (width - 2 * padding - labelWidth) / this.sequence.length
     const heightPerNote = 16
 
+    // Grid
+
     this.ctx.beginPath()
     this.ctx.strokeStyle = "#333"
     this.ctx.lineWidth = 2
@@ -622,6 +651,20 @@ class SequenceEditor {
     }
     this.ctx.stroke()
 
+    // Subscale
+
+    this.ctx.fillStyle = "rgba(255, 255, 255, 0.1)"
+    for (let i = 0; i <= (height - 2 * padding) / heightPerNote; i++) {
+      const note = i - this.scroll.note
+      const subscale = this.sequence.subscale
+      if (subscale.kind.notes.includes(((note - subscale.base) % this.sequence.scale.ocataveSize + this.sequence.scale.ocataveSize) % this.sequence.scale.ocataveSize)) {
+        const y = height - padding - i * heightPerNote
+        this.ctx.fillRect(padding + labelWidth, y - heightPerNote, width - 2 * padding - labelWidth, heightPerNote)
+      }
+    }
+
+    // Beats
+
     this.ctx.beginPath()
     this.ctx.strokeStyle = "#555"
     this.ctx.lineWidth = 2
@@ -632,6 +675,8 @@ class SequenceEditor {
     }
     this.ctx.stroke()
 
+    // Note Labels
+
     this.ctx.fillStyle = "#fff"
     this.ctx.font = "10px Noto Sans, sans-serif"
     for (let i = 0; i <= (height - 2 * padding) / heightPerNote; i++) {
@@ -641,6 +686,8 @@ class SequenceEditor {
       let x = padding + labelWidth - measurements.width - 4
       this.ctx.fillText(label, x, y)
     }
+
+    // Notes
 
     this.ctx.fillStyle = "#fff"
     for (const note of this.sequence.notes) {
@@ -665,7 +712,7 @@ class SequenceEditor {
     }
 
     if (this.playhead !== null) {
-      const { x } = this.toScreenSpace(this.playhead, 0)
+      const { x } = this.toScreenSpace(this.playhead % this.sequence.length, 0)
       this.ctx.strokeStyle = "#0f0"
       this.ctx.lineWidth = 2
       this.ctx.beginPath()
@@ -714,18 +761,30 @@ class Project {
     return track
   }
 
+  get length() {
+    let length = 0
+    for (const track of this.tracks) {
+      length = Math.max(length, track.sequence.length)
+    }
+    return length
+  }
+
   render(buffer) {
     const data = buffer.getChannelData(0)
+    const length = this.length
     for (const track of this.tracks) {
-      for (const note of track.sequence.notes) {
-        const startSample = Math.floor(note.time * buffer.sampleRate)
-        const endSample = Math.floor((note.time + note.duration + track.instrument.adsr.release) * buffer.sampleRate)
-        const frequency = track.sequence.scale.getFrequency(note.note)
-        for (let i = startSample; i < endSample; i++) {
-          const time = i / buffer.sampleRate - note.time
-          const sample = track.instrument.synth.getSample(time, frequency)
-          const level = track.instrument.adsr.getLevel(time, note.duration)
-          data[i] += sample * level * track.volume
+      for (let repeat = 0; repeat < Math.ceil(length / track.sequence.length); repeat++) {
+        for (const note of track.sequence.notes) {
+          const startTime = note.time + repeat * track.sequence.length
+          const startSample = Math.floor(startTime * buffer.sampleRate)
+          const endSample = Math.floor((startTime + note.duration + track.instrument.adsr.release) * buffer.sampleRate)
+          const frequency = track.sequence.scale.getFrequency(note.note)
+          for (let i = startSample; i < endSample; i++) {
+            const time = (i / buffer.sampleRate - note.time) - repeat * track.sequence.length
+            const sample = track.instrument.synth.getSample(time, frequency)
+            const level = track.instrument.adsr.getLevel(time, note.duration)
+            data[i] += sample * level * track.volume
+          }
         }
       }
     }
@@ -759,6 +818,7 @@ class AudioEngine {
     this.gain.gain.value = 0.8
 
     this.onplaying = new EventEmitter()
+    this.onplay = new EventEmitter()
     this.onstop = new EventEmitter()
   }
 
@@ -766,7 +826,7 @@ class AudioEngine {
     this.isPlaying = true
 
     const buffer = new AudioBuffer({
-      length: this.audioContext.sampleRate * 10,
+      length: this.audioContext.sampleRate * this.project.length,
       sampleRate: this.audioContext.sampleRate,
       numberOfChannels: 1
     })
@@ -792,6 +852,8 @@ class AudioEngine {
     }
 
     anim()
+
+    this.onplay.trigger()
   }
 
   stop() {
@@ -815,6 +877,7 @@ class PlayPauseButton {
       }
     }, "Play")
 
+    this.audioEngine.onplay.on(() => this.update())
     this.audioEngine.onstop.on(() => this.update())
   }
 
@@ -840,6 +903,20 @@ class ProjectEditor {
       ]),
       this.tracks = h(".tracks")
     ])
+
+    window.onkeydown = (e) => {
+      if (e.target.tagName === "INPUT") {
+        return
+      }
+
+      if (e.code === "Space") {
+        if (this.audioEngine.isPlaying) {
+          this.audioEngine.stop()
+        } else {
+          this.audioEngine.play()
+        }
+      }
+    }
 
     this.updateAll()
   }
