@@ -347,20 +347,107 @@ class Sequence {
   addNote(time, note, duration) {
     this.notes.push({ time, note, duration })
   }
+
+  removeNotes(time, note) {
+    this.notes = this.notes.filter(n => 
+      n.time >= time || n.time + n.duration <= time ||
+      n.note !== note
+    )
+  }
 }
 
 class SequenceEditor {
-  constructor(sequence) {
+  constructor(sequence, audioContext) {
     this.sequence = sequence
+    this.audioContext = audioContext
     this.element = h(".sequence-editor.card", {style: {"flex-grow": 1}}, [
       h("h1", "Sequence Editor"),
       this.canvas = h("canvas.sequence-canvas", {height: 1})
     ])
 
+    this.canvas.oncontextmenu = (e) => {
+      e.preventDefault()
+      return false
+    }
+
+    this.canvas.onpointerdown = (e) => {
+      e.preventDefault()
+      const { note, time } = this.toNoteSpace(e.offsetX, e.offsetY)
+
+      if (e.button === 0) {
+        this.editingNote = { note: Math.floor(note), time: Math.floor(time), duration: 1 }
+      } else if (e.button === 2) {
+        this.sequence.removeNotes(time, Math.floor(note))
+      }
+
+      this.draw()
+
+      return true
+    }
+
+    this.canvas.onpointermove = (e) => {
+      const { note, time } = this.toNoteSpace(e.offsetX, e.offsetY)
+      this.cursor = { note, time }
+
+      if (this.editingNote) {
+        this.editingNote.duration = Math.max(1, Math.round(time - this.editingNote.time))
+      }
+
+      this.draw()
+    }
+
+    this.canvas.onpointerup = (e) => {
+      if (this.editingNote) {
+        this.sequence.addNote(this.editingNote.time, this.editingNote.note, this.editingNote.duration)
+        this.editingNote = null
+        this.draw()
+      }
+    }
+
+    this.cursor = null
+    this.editingNote = null
+    this.playhead = null
+
     this.ctx = this.canvas.getContext("2d")
     this.draw()
 
+    this.audioContext.onplaying.on(({time}) => {
+      this.playhead = time
+      this.draw()
+    })
+
+    this.audioContext.onstop.on(() => {
+      this.playhead = null
+      this.draw()
+    })
+
     new ResizeObserver(() => this.resize()).observe(this.canvas)
+  }
+
+  toNoteSpace(x, y) {
+    const padding = 12
+    const width = this.canvas.width
+    const height = this.canvas.height
+    const widthPerBeat = (width - 2 * padding) / this.sequence.length
+    const heightPerNote = 16
+
+    const time = (x - padding) / widthPerBeat
+    const note = (height - padding - y) / heightPerNote
+
+    return { time, note }
+  }
+
+  toScreenSpace(time, note) {
+    const padding = 12
+    const width = this.canvas.width
+    const height = this.canvas.height
+    const widthPerBeat = (width - 2 * padding) / this.sequence.length
+    const heightPerNote = 16
+
+    const x = time * widthPerBeat + padding
+    const y = height - padding - note * heightPerNote
+
+    return { x, y }
   }
 
   resize() {
@@ -400,14 +487,36 @@ class SequenceEditor {
     }
     this.ctx.stroke()
 
+    this.ctx.fillStyle = "#fff"
     for (const note of this.sequence.notes) {
-      const x = padding + note.time / this.sequence.length * (width - 2 * padding)
-      const y = height - padding - (note.note + 1) * heightPerNote
-      const w = note.duration / this.sequence.length * (width - 2 * padding)
-      const h = heightPerNote - 2
+      const { x, y } = this.toScreenSpace(note.time, note.note)
+      this.ctx.fillRect(x, y - heightPerNote, note.duration * widthPerBeat, heightPerNote)
+    }
 
-      this.ctx.fillStyle = "#fff"
-      this.ctx.fillRect(x, y, w, h)
+    if (this.editingNote) {
+      const { x, y } = this.toScreenSpace(this.editingNote.time, this.editingNote.note)
+      this.ctx.fillStyle = "rgba(255, 255, 255, 0.5)"
+      this.ctx.fillRect(x, y - heightPerNote, this.editingNote.duration * widthPerBeat, heightPerNote)
+    }
+
+    if (this.cursor) {
+      const { x, y } = this.toScreenSpace(this.cursor.time, this.cursor.note)
+      this.ctx.strokeStyle = "#f00"
+      this.ctx.lineWidth = 2
+      this.ctx.beginPath()
+      this.ctx.moveTo(x, padding)
+      this.ctx.lineTo(x, height - padding)
+      this.ctx.stroke()
+    }
+
+    if (this.playhead !== null) {
+      const { x } = this.toScreenSpace(this.playhead, 0)
+      this.ctx.strokeStyle = "#0f0"
+      this.ctx.lineWidth = 2
+      this.ctx.beginPath()
+      this.ctx.moveTo(x, padding)
+      this.ctx.lineTo(x, height - padding)
+      this.ctx.stroke()
     }
 
   }
@@ -467,12 +576,34 @@ class Project {
   }
 }
 
+class EventEmitter {
+  constructor() {
+    this.callbacks = new Set()
+  }
+
+  on(callback) {
+    this.callbacks.add(callback)
+  }
+
+  trigger(...args) {
+    for (const callback of this.callbacks) {
+      callback(...args)
+    }
+  }
+}
+
 class AudioEngine {
   constructor(project) {
     this.project = project
     this.isPlaying = false
     this.audioContext = new AudioContext()
     this.source = null
+    this.gain = this.audioContext.createGain()
+    this.gain.connect(this.audioContext.destination)
+    this.gain.gain.value = 0.8
+
+    this.onplaying = new EventEmitter()
+    this.onstop = new EventEmitter()
   }
 
   play() {
@@ -487,8 +618,24 @@ class AudioEngine {
 
     this.source = this.audioContext.createBufferSource()
     this.source.buffer = buffer
-    this.source.connect(this.audioContext.destination)
+    this.source.onended = () => {
+      this.isPlaying = false
+      this.source = null
+      this.onstop.trigger()
+    }
+    this.source.connect(this.gain)
     this.source.start()
+
+    const startTime = this.audioContext.currentTime
+
+    const anim = () => {
+      if (this.source && this.isPlaying) {
+        this.onplaying.trigger({time: this.audioContext.currentTime - startTime})
+        window.requestAnimationFrame(() => anim())
+      }
+    }
+
+    anim()
   }
 
   stop() {
@@ -511,6 +658,8 @@ class PlayPauseButton {
         this.update()
       }
     }, "Play")
+
+    this.audioEngine.onstop.on(() => this.update())
   }
 
   update() {
@@ -549,7 +698,7 @@ class ProjectEditor {
       const trackElement = h(".track", [
         new AdsrEditor(track.instrument.adsr).element,
         new AdditiveSynthEditor(track.instrument.synth).element,
-        new SequenceEditor(track.sequence).element
+        new SequenceEditor(track.sequence, this.audioEngine).element
       ])
       this.tracks.appendChild(trackElement)
     }
